@@ -1,0 +1,110 @@
+{# Persistent race model; timestamps are producer milliseconds plus HA receipt time. #}
+{% set e = trigger.event.data %}
+{% set p = e.get('payload') or {} %}
+{% set kind = e.get('event_type', p.get('event_type', '')) %}
+{% set d = p.get('event_data') %}
+{% set d = d if d is mapping else {} %}
+{% set t = p.get('time', (as_timestamp(trigger.event.time_fired)*1000)|int)|int %}
+{% set received = (as_timestamp(trigger.event.time_fired)*1000)|int %}
+{% set old = this.attributes.get('data') or {} %}
+{% set oldstatus = old.get('status','unknown') %}
+{% set incoming = d.get('event_id',p.get('event_id')) %}
+{% set reset = kind == 'event.change_status' and d.get('new') == 'prepare_for_start' and oldstatus != 'prepare_for_start' %}
+{% set reset = reset or (kind == 'event.start' and incoming is not none and incoming|string != old.get('event_id')|string) %}
+{% set reset = reset and t >= old.get('last_source_time',0)|int %}
+{% set ns = namespace(m=old, readings=old.get('readings',{})) %}
+{% if reset %}
+ {% set ns.m = dict(status='prepare_for_start',event_id=incoming,reset_time=t,readings={},result={},result_time=0,lap_gaps=[],received_count=0,weather='dry',ended_at=0,track=old.get('track',{}),target_laps=0) %}
+ {% set ns.readings = {} %}
+{% endif %}
+{% set match = incoming is none or ns.m.get('event_id') is none or incoming|string == ns.m.get('event_id')|string %}
+{% set valid = t >= ns.m.get('reset_time',0)|int and match %}
+{% set ns.m = dict(ns.m,last_received=received,received_count=ns.m.get('received_count',0)+1,last_event=kind) %}
+{% set key = kind ~ ':' ~ (d.get('controller_id','')|string) %}
+{% set seen = ns.m.get('event_times',{}) %}
+{% set valid = valid and t > seen.get(key,0)|int %}
+{% if valid %}
+ {% set ns.m=dict(ns.m,last_source_time=[t,ns.m.get('last_source_time',0)]|max,event_times=dict(seen.items()|rejectattr('0','eq',key)|list+[(key,t)])) %}
+ {% if incoming is not none and ns.m.get('event_id') is none %}{% set ns.m=dict(ns.m,event_id=incoming) %}{% endif %}
+ {% if kind == 'util.set_active_track' %}{% set ns.m=dict(ns.m,track=d) %}{% endif %}
+ {% if kind == 'event.start' %}{% set ns.m=dict(ns.m,target_laps=d.get('laps',0)|int,track=d.get('track') if d.get('track') is mapping else ns.m.get('track',{})) %}{% endif %}
+ {% if kind == 'event.change_status' and d.get('new') in ['prepare_for_start','starting','running','paused','suspended','restarting','jumpstart','ended'] %}
+  {% set ns.m=dict(ns.m,status=d.new) %}
+  {% if d.new in ['suspended','paused','jumpstart','restarting'] %}
+   {% set ns.m=dict(ns.m,interruptions=(ns.m.get('interruptions',[])+[dict(status=d.new,time=t)])[-100:]) %}
+   {% for cid, reading in ns.readings.items() %}
+    {% set ns.readings=dict(ns.readings.items()|rejectattr('0','eq',cid)|list+[(cid,dict(reading,lap_interrupted=true))]) %}
+   {% endfor %}
+  {% endif %}
+  {% if d.new=='ended' %}{% set ns.m=dict(ns.m,ended_at=received) %}{% endif %}
+ {% endif %}
+ {% if kind in ['events.weather_update','events.weather_change'] and p.get('event_data') in ['dry','about_to_rain','wet','about_to_dry_up'] %}
+  {% set ns.m=dict(ns.m,weather=p.event_data) %}
+ {% endif %}
+ {% set id=d.get('controller_id','')|string %}
+ {% if id in ['1','2','3','4','5','6','7','8'] %}
+  {% set prev=ns.readings.get(id,dict(tire='dry')) %}
+  {% set r=namespace(v=prev) %}
+  {% if kind=='ui.lap_update' and d.get('lap',0)|int > prev.get('lap',0)|int %}
+   {% set lap=d.lap|int %}{% set last=prev.get('lap',0)|int %}
+   {% if lap>last+1 %}{% set ns.m=dict(ns.m,lap_gaps=(ns.m.get('lap_gaps',[])+[dict(controller=id,after=last,before=lap,time=t)])[-100:]) %}{% endif %}
+   {% set best=prev.get('best_laptime_raw',0)|int %}{% set ms=d.get('laptime_raw',0)|int %}
+   {% set best=ms if ms>0 and (best==0 or ms<best) else best %}
+   {% set clean=ms>0 and lap==last+1 and not prev.get('lap_interrupted',false) and not prev.get('lap_pitted',false) and not prev.get('in_pit',false) %}
+   {% set n=prev.get('clean_count',0) %}{% set mean=prev.get('clean_mean',0) %}{% set m2=prev.get('clean_m2',0) %}
+   {% if clean %}{% set n=n+1 %}{% set delta=ms-mean %}{% set mean=mean+delta/n %}{% set m2=m2+delta*(ms-mean) %}{% endif %}
+   {% set sectors=namespace(v=prev.get('sector_bests',{})) %}
+   {% for i in [1,2,3] %}
+    {% set val=d.get('sector_'~i~'_raw',0)|int %}{% set key=i|string %}
+    {% if val>0 and (sectors.v.get(key,0)==0 or val<sectors.v.get(key)) %}{% set sectors.v=dict(sectors.v.items()|rejectattr('0','eq',key)|list+[(key,val)]) %}{% endif %}
+   {% endfor %}
+   {% set used=(prev.get('lap_fuel',-1)|float(-1))-(prev.get('fuel',-1)|float(-1)) %}
+   {% set samples=prev.get('fuel_samples',[]) %}
+   {% if clean and prev.get('lap_fuel',-1)|float(-1)>=0 and prev.get('fuel',-1)|float(-1)>=0 and used>0 and used<=100 and not prev.get('lap_refuelled',false) %}{% set samples=(samples+[used])[-5:] %}{% endif %}
+   {% set r.v=dict(prev,lap=lap,event_data=d,event_time=t,best_laptime_raw=best,lap_pb=d.get('lap_pb',false),pb_time=t if d.get('lap_pb',false) else prev.get('pb_time',0),sector_bests=sectors.v,clean_count=n,clean_mean=mean,clean_m2=m2,last_laps=(prev.get('last_laps',[])+[dict(lap=lap,ms=ms,clean=clean)])[-5:],lap_delta=ms-prev.get('last_lap_ms',ms),last_lap_ms=ms,lap_interrupted=false,lap_pitted=false,lap_refuelled=false,lap_fuel=prev.get('fuel',-1),fuel_samples=samples) %}
+  {% elif kind=='ui.sector_for_car' and d.get('sector_id')|int in [1,2,3] %}
+   {% set r.v=dict(prev,sector=d.sector_id|int,sector_time=t,sector_pb=d.get('is_personal_best_sector',false),sector_best=d.get('is_overall_best_sector',false)) %}
+  {% elif kind=='util.fuel_update' %}
+   {% set r.v=dict(prev,fuel=d.get('fuel'),fuel_time=t,lap_refuelled=prev.get('lap_refuelled',false) or d.get('fuel',-1)|float(-1)>prev.get('fuel',100)|float(100),fuel_peak=[prev.get('fuel_peak',0)|float(0),d.get('fuel',0)|float(0)]|max if prev.get('in_pit',false) else 0) %}
+  {% elif kind=='event.pit.enter' and t > prev.get('pit_time',0)|int and not prev.get('in_pit',false) %}
+   {% set r.v=dict(prev,in_pit=true,lap_pitted=true,pit_fuel_start=prev.get('fuel'),fuel_peak=prev.get('fuel',0),pit_time=t,pit_entered_at=t,pit_count=prev.get('pit_count',0)+1,pit_tyre_changes=[],pit_repairs=[]) %}
+  {% elif kind=='event.pit.leave' and t > prev.get('pit_time',0)|int %}
+   {% if prev.get('in_pit',false) %}
+    {% set duration=[0,(t-prev.get('pit_entered_at',t))/1000]|max %}
+    {% set stop=dict(entered_at=prev.get('pit_entered_at'),left_at=t,seconds=duration,fuel_gained=[0,(prev.get('fuel_peak',0)|float(0))-(prev.get('pit_fuel_start',0)|float(0))]|max,tyre_changes=prev.get('pit_tyre_changes',[]),repairs=prev.get('pit_repairs',[])) %}
+    {% set r.v=dict(prev,in_pit=false,pit_time=t,last_pit_seconds=duration,pit_history=(prev.get('pit_history',[])+[stop])[-100:]) %}
+   {% else %}{% set r.v=dict(prev,in_pit=false,pit_time=t,unmatched_pit_exits=prev.get('unmatched_pit_exits',0)+1) %}{% endif %}
+  {% elif kind=='events.tire_change' and d.get('tire') in ['wet','dry'] %}
+   {% set r.v=dict(prev,tire=d.tire,tire_time=t) %}
+   {% if prev.get('in_pit',false) %}{% set r.v=dict(r.v,pit_tyre_changes=prev.get('pit_tyre_changes',[])+[dict(tire=d.tire,time=t)]) %}{% endif %}
+  {% elif kind=='race.damage_update' %}
+   {% set r.v=dict(prev,damage=d.get('damage'),damage_time=t) %}
+   {% if d.get('damage')=='none' and prev.get('damage') not in [none,'none'] and prev.get('in_pit',false) %}
+    {% set r.v=dict(r.v,pit_repairs=prev.get('pit_repairs',[])+[dict(damage=prev.damage,time=t)]) %}
+   {% endif %}
+  {% endif %}
+  {# Seed current-race identity from fuel or sector data, before lap timing exists. #}
+  {% if kind in ['util.fuel_update','ui.sector_for_car'] and not prev.get('lap',0) and d.get('driver_data') is mapping %}
+   {% set identity=prev.get('event_data',{}) %}
+   {% set identity=dict(identity,controller_id=id,driver_data=d.driver_data,car_data=d.get('car_data',identity.get('car_data',{})),controller_data=d.get('controller_data',identity.get('controller_data',{})),event_id=incoming,lap=0) %}
+   {% set r.v=dict(r.v,event_data=identity,event_time=t,lap=0) %}
+  {% endif %}
+  {% set ns.readings=dict(ns.readings.items()|rejectattr('0','eq',id)|list+[(id,r.v)]) %}
+ {% endif %}
+ {% if kind=='event.end' and d.get('type')=='race' and d.get('result') is mapping %}
+  {% set ns.m=dict(ns.m,status='ended',result=d.result,result_time=t,ended_at=received) %}
+  {% for entry in d.result.values() %}
+   {% set id=entry.get('controller_id')|string %}{% set prev=ns.readings.get(id,dict(tire='dry')) %}
+   {% set revised=dict(prev,official_pit_count=entry.get('pitstops'),pit_count_matches=entry.get('pitstops')==prev.get('pit_count',0)) %}
+   {% set ns.readings=dict(ns.readings.items()|rejectattr('0','eq',id)|list+[(id,revised)]) %}
+  {% endfor %}
+ {% endif %}
+{% endif %}
+{% for cid,r in ns.readings.items() %}
+ {% set wet=ns.m.get('weather')=='wet' and r.get('tire','dry')=='dry' %}
+ {% set wet_latch=wet and (r.get('wet_warning_active',false) or (ns.m.get('status')=='running' and r.get('event_data') is mapping)) %}
+ {% set fuel=r.get('fuel',-1)|float(-1) %}
+ {% set fuel_latch=(r.get('fuel_warning_active',false) and 0<=fuel<25) or (ns.m.get('status')=='running' and 0<=fuel<=20) %}
+ {% set ns.readings=dict(ns.readings.items()|rejectattr('0','eq',cid)|list+[(cid,dict(r,wet_warning_active=wet_latch,fuel_warning_active=fuel_latch))]) %}
+{% endfor %}
+{{ dict(ns.m,readings=ns.readings) }}

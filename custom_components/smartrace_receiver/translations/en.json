@@ -1,0 +1,28 @@
+{
+  "title": "SmartRace Receiver",
+  "config": {
+    "step": {
+      "user": {
+        "title": "SmartRace Receiver",
+        "description": "Your SmartRace webhook URL:\n\n`{webhook_url}`\n\n{url_note}\n\nYou can find this URL again through Configure. Keep local-only enabled for a phone on your home network.\n\nThe receiver creates all race-data sensors automatically. No template YAML or receiver automation is required.",
+        "data": {
+          "local_only": "Accept requests from the local network only"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "SmartRace Receiver is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Receiver settings",
+        "description": "Your SmartRace webhook URL:\n\n`{webhook_url}`\n\n{url_note}\n\nYou can find this URL again through Configure. Keep local-only enabled for a phone on your home network.",
+        "data": {
+          "local_only": "Accept requests from the local network only"
+        }
+      }
+    }
+  }
+}

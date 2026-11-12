@@ -1,0 +1,21 @@
+manual_update:
+  name: Manual race update
+  description: Updates Home Assistant race data only. Does not control the SmartRace app. Preparing a race clears current race readings.
+  fields:
+    event_type:
+      name: Event type
+      required: true
+      selector:
+        select:
+          options:
+            - event.change_status
+            - events.weather_update
+            - events.weather_change
+            - race.vsc_deployed
+            - race.vsc_retracted
+    event_data:
+      name: Event data
+      description: Use a new status object (prepare_for_start, starting, running, ended), a weather string, or an empty object for VSC.
+      required: true
+      selector:
+        object: {}
