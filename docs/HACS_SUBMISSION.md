@@ -1,28 +1,21 @@
-# HACS submission checklist
-
-Prepared for later submission. This document is not a claim of acceptance or completed validation.
+# Marketplace catalogue submission
 
 Repository: https://github.com/gert-bezuidenhout/ha.smartrace-receiver
-Category: integration
 
-## Before submitting
+Category: integration.
 
-- [ ] Confirm a fresh custom-repository install through HACS and successful setup in Home Assistant.
-- [ ] Confirm restart, reload and update behaviour on a supported Home Assistant version; document the tested versions.
-- [ ] Set a repository description: "SmartRace Receiver for Home Assistant".
-- [ ] Set repository topics: home-assistant, hacs, smartrace, custom-integration.
-- [ ] Keep Issues enabled and the repository public and active.
-- [ ] Confirm GitHub recognises the MIT LICENSE.
-- [ ] Run both jobs in Validate and resolve every failure; do not add ignored checks.
-- [ ] Review branding rights and ensure the included brand/icon.png is accepted by validation.
-- [ ] Publish a full GitHub release after validation passes (not only a tag), matching manifest.json version.
-- [ ] Check the latest [HACS inclusion requirements](https://www.hacs.xyz/docs/publish/include/) again.
+Catalogue submission is authorised and being prepared. The repository is not yet accepted into the default catalogue; users must continue to add it as a custom repository until acceptance.
 
-## Later submission
+## Publication requirements
 
-Create a branch from master in a fork of hacs/default. Add "gert-bezuidenhout/ha.smartrace-receiver" alphabetically to its integration list, following its existing JSON format. Complete the current pull-request template accurately and allow maintainer edits. Submit only after all checks above are complete.
+- Public, active repository with README, description, topics and Issues enabled.
+- MIT licence recognised by GitHub.
+- Integration manifest, hacs.json and bundled brand/icon.png.
+- Passing HACS Action without ignored checks and passing Hassfest.
+- Full GitHub release 1.1.7, published only after validation succeeds.
 
-Suggested title: Add gert-bezuidenhout/ha.smartrace-receiver
-Suggested summary: Adds SmartRace Receiver for Home Assistant, a community integration with UI setup. Validation and release links should be inserted after they exist.
+## Submit
 
-No HACS default-list submission is made by adding these preparation files.
+Follow the [HACS inclusion requirements](https://hacs.xyz/docs/publish/include/) and the current pull-request template in [hacs/default](https://github.com/hacs/default). Add gert-bezuidenhout/ha.smartrace-receiver alphabetically to the integration list on a branch in the owner's fork, allowing maintainer edits. Include the release and successful validation-run links.
+
+Automated validation does not establish live-device testing. Do not claim fresh-install or live-service verification unless it has been performed separately.
